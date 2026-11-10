@@ -1,0 +1,40 @@
+cff-version: 1.2.0
+message: "If you use Rhino Open AI Kit, please cite it as below. It was made with generative AI; see the README's 'Credits and AI disclosure'."
+type: software
+title: "Rhino Open AI Kit: an offline, open-source AI assistant for Rhino 8"
+version: 0.1.0
+date-released: 2026-11-10
+license: MIT
+authors:
+  - name: "Rhino Open AI Kit contributors"
+abstract: >-
+  Portable, offline chat assistant for Rhino 8 on Mac and Windows. An open-weight language model
+  runs locally in llama.cpp and acts on the Rhino document through tools: it reads the scene,
+  writes Rhino Python using a tested helper library, and runs it after user confirmation as one
+  undo step. Machine tiers from 8 GB to 128 GB with matching model presets. Developed with
+  generative AI assistance (Claude, Anthropic).
+keywords:
+  - Rhino
+  - Rhinoceros 3D
+  - local AI
+  - llama.cpp
+  - architecture
+  - computational design
+references:
+  - type: software
+    title: "Rhinoceros 8 / RhinoCommon"
+    authors:
+      - name: "Robert McNeel & Associates"
+    url: "https://www.rhino3d.com/"
+  - type: software
+    title: "llama.cpp"
+    authors:
+      - name: "Georgi Gerganov and contributors"
+    url: "https://github.com/ggml-org/llama.cpp"
+  - type: software
+    title: "Claude"
+    authors:
+      - name: Anthropic
+    year: 2026
+    url: "https://www.anthropic.com/claude"
+    notes: "Large language model; wrote code and texts for Rhino Open AI Kit."

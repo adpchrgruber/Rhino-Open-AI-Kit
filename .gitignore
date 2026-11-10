@@ -1,0 +1,22 @@
+# Downloaded runtime and models (never commit binaries or weights)
+bin/mac/*
+bin/win/*
+!bin/mac/.keep
+!bin/win/.keep
+models/*
+!models/.keep
+*.gguf
+*.part
+*.tar.gz
+*.zip
+
+# Local settings backups
+kit.conf.bak
+
+# OS / editors
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc
+.vscode/
+.idea/
