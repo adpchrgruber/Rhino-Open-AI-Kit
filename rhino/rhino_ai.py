@@ -201,6 +201,9 @@ Rules:
   After 2 failed tries with RhinoCommon, solve it with the ai helpers instead.
 - A grid of N mm over a length L has L/N cells. If the user gives no object size, use the cell size
   and say which size you assumed.
+- When the user attaches an image (photo, sketch, plan): first say in one or two sentences what you see
+  (parts, proportions, materials). Estimate real dimensions in document units from known sizes and state
+  your assumptions. Then model it part by part with the helpers. You cannot trace an image exactly.
 - Answer briefly and concretely. Reply in the language the user writes in."""
 
 TOOLS = [
@@ -956,8 +959,14 @@ class Agent(object):
             return "Viewport image attached in the next message.", png
         return "Unknown tool: %s" % name, None
 
-    def ask(self, text, max_steps=8):
-        self.messages.append({"role": "user", "content": text})
+    def ask(self, text, max_steps=8, images=None):
+        if images:
+            content = [{"type": "text", "text": text}]
+            for url in images:
+                content.append({"type": "image_url", "image_url": {"url": url}})
+            self.messages.append({"role": "user", "content": content})
+        else:
+            self.messages.append({"role": "user", "content": text})
         for _ in range(max_steps):
             msg = chat(self.conf, self.messages, TOOLS)
             calls = msg.get("tool_calls") or []
@@ -995,6 +1004,25 @@ class Agent(object):
 
 # ---------------------------------------------------------------- UI
 
+def image_data_url(path, max_side=1024):
+    """Read an image file as a data URL, scaled down so it does not fill the context window."""
+    try:
+        bmp = drawing.Bitmap(path)
+        w, h = bmp.Width, bmp.Height
+        if max(w, h) > max_side:
+            f = float(max_side) / max(w, h)
+            bmp = drawing.Bitmap(bmp, int(w * f), int(h * f), drawing.ImageInterpolation.High)
+        tmp = os.path.join(tempfile.gettempdir(), "rhino_ai_input.png")
+        bmp.Save(tmp, drawing.ImageFormat.Png)
+        with open(tmp, "rb") as f:
+            return "data:image/png;base64," + base64.b64encode(f.read()).decode("ascii")
+    except Exception:
+        ext = os.path.splitext(path)[1].lower().strip(".")
+        mime = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "webp": "webp", "gif": "gif", "bmp": "bmp"}.get(ext, "png")
+        with open(path, "rb") as f:
+            return "data:image/%s;base64,%s" % (mime, base64.b64encode(f.read()).decode("ascii"))
+
+
 class ChatForm(forms.Form):
     def __init__(self, kit, conf):
         super().__init__()
@@ -1020,6 +1048,11 @@ class ChatForm(forms.Form):
         self.send_btn = forms.Button()
         self.send_btn.Text = "Send"
         self.send_btn.Click += self.on_send
+        self.images = []
+        self.image_btn = forms.Button()
+        self.image_btn.Text = "Image"
+        self.image_btn.ToolTip = "Attach an image (photo, sketch, plan, reference) to your next message"
+        self.image_btn.Click += self.on_image
         clear_btn = forms.Button()
         clear_btn.Text = "New chat"
         clear_btn.Click += self.on_clear
@@ -1030,6 +1063,7 @@ class ChatForm(forms.Form):
         buttons.Orientation = forms.Orientation.Horizontal
         buttons.Spacing = 6
         buttons.Items.Add(forms.StackLayoutItem(self.send_btn))
+        buttons.Items.Add(forms.StackLayoutItem(self.image_btn))
         buttons.Items.Add(forms.StackLayoutItem(clear_btn))
         buttons.Items.Add(forms.StackLayoutItem(self.status))
 
@@ -1081,20 +1115,44 @@ class ChatForm(forms.Form):
         self.agent.reset()
         self.history.Text = ""
 
+    def on_image(self, sender, e):
+        if not self.agent.vision:
+            forms.MessageBox.Show(self, "Image input needs the vision file.\n\nPut mmproj-F16.gguf into models/, "
+                                  "set MMPROJ=mmproj-F16.gguf in kit.conf, then restart the model server "
+                                  "and this window.", "RhinoAI")
+            return
+        dlg = forms.OpenFileDialog()
+        dlg.Title = "Attach image"
+        dlg.MultiSelect = True
+        dlg.Filters.Add(forms.FileFilter("Images", ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"))
+        if dlg.ShowDialog(self) != forms.DialogResult.Ok:
+            return
+        for path in list(dlg.Filenames)[:3]:
+            try:
+                self.images.append((os.path.basename(path), image_data_url(path)))
+            except Exception as ex:
+                self.log("error", "Could not read image %s (%s)" % (path, ex))
+        self.image_btn.Text = "Image (%d)" % len(self.images) if self.images else "Image"
+
     def on_send(self, sender, e):
         text = (self.prompt.Text or "").strip()
+        if self.images and not text:
+            text = "Describe this image and what in it could be modelled in Rhino."
         if not text or self.busy:
             return
+        images = self.images
+        self.images = []
+        self.image_btn.Text = "Image"
         self.prompt.Text = ""
         self.busy = True
         self.send_btn.Enabled = False
-        self.log("you", text)
+        self.log("you", text + ("".join("  [image: %s]" % n for n, _ in images)))
         self.set_status("Thinking ...")
-        threading.Thread(target=self.run_agent, args=(text,), daemon=True).start()
+        threading.Thread(target=self.run_agent, args=(text, [u for _, u in images]), daemon=True).start()
 
-    def run_agent(self, text):
+    def run_agent(self, text, images=None):
         try:
-            answer = self.agent.ask(text)
+            answer = self.agent.ask(text, images=images)
             self.log("ai", answer)
         except urllib.error.URLError as ex:
             self.log("error", "Model server not reachable (%s). Is the terminal window running?" % ex)
