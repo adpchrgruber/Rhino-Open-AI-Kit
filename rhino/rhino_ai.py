@@ -123,7 +123,10 @@ You act on the open Rhino document through tools. Document units are given by ge
 Rules:
 - Call get_scene_info first when you need to know what is in the model.
 - To create or change geometry call run_python with complete Python 3 code.
-- PREFER the ready-made helper module `ai` (already imported in run_python). It is tested and safe:
+- Do NOT write import lines for ai, Rhino, sc, rs or System. They are already available.
+- Model real objects with real proportions in the document units, one layer per material or element,
+  named "Object::Element_Material". Round things are revolved profiles, not boxes.
+- PREFER the ready-made helper module `ai` (already available in run_python):
     ai.box(x, y, z, sx, sy, sz, layer=None)        box with corner at (x,y,z) and sizes sx,sy,sz -> id
     ai.sphere(x, y, z, radius, layer=None)         -> id
     ai.cylinder(x, y, z, radius, height, layer=None)   vertical, base centre at (x,y,z) -> id
@@ -158,6 +161,26 @@ Rules:
     ai.align(ids, axis="x", mode="min")   mode "min"/"center"/"max"; e.g. axis="z", mode="min" puts all on one floor
     ai.distribute(ids, axis="x", gap=None)   gap=None: even spacing; gap=50: 50 units clear between neighbours
     ai.mirror(ids, axis="x", at=0, copy=True)   ai.place_on_surface(id, surface_id, u=0.5, v=0.5)   ai.distance(id_a, id_b)
+  Layers, materials, round objects:
+    ai.layer("Bottle::Body", (r,g,b))    "Parent::Child" makes nested layers
+    ai.tube([(x,y,z), ...], radius, smooth=True, layer=None) -> id   solid round tube through 3D points.
+        Use it for handles, spouts, legs, rails. Example handle on the +X side of a pot of radius 50:
+        ai.tube([(48,0,150),(85,0,150),(95,0,100),(85,0,50),(48,0,50)], 6, layer="Kettle::Handle_Plastic")
+        Example spout on the -X side, rising outward: ai.tube([(-45,0,90),(-70,0,130),(-85,0,165)], 9)
+    ai.material(layer, (r,g,b), transparency=0.0, shine=0.3)   render material on a layer; 0.8 = glass/water
+    ai.revolve([(radius, z), ...], cx=0, cy=0, smooth=False, cap=True, layer=None) -> id   lathe a profile around a
+        vertical axis. Use it for bottles, vases, bowls, lamps, columns. Points go from bottom to top.
+        cap=True closes it to a solid; cap=False leaves an open skin (label, sleeve, shade).
+  Example, a bottle with layers per element and material:
+    ai.material("Bottle::Body_PET", (220, 235, 245), transparency=0.7)
+    ai.material("Bottle::Water", (120, 190, 255), transparency=0.8)
+    ai.material("Bottle::Cap_HDPE", (30, 90, 200))
+    ai.material("Bottle::Label_Paper", (245, 245, 235))
+    body = ai.revolve([(0,0),(33,0),(35,5),(35,140),(30,165),(13,185),(13,205),(0,205)], smooth=False, layer="Bottle::Body_PET")
+    water = ai.revolve([(0,2),(33,2),(33,130),(0,130)], layer="Bottle::Water")
+    cap = ai.cylinder(0, 0, 195, 15, 14, layer="Bottle::Cap_HDPE")
+    label = ai.revolve([(35.3,50),(35.3,110)], cap=False, layer="Bottle::Label_Paper")
+    print("bottle parts:", 4)
   Coordinates: X = right, Y = back (plan view is XY), Z = up. A floor plan is drawn at z=0.
   Example, a 10 x 10 grid of boxes on a 30 mm grid:
     ids = [ai.box(i*30, j*30, 0, 25, 25, 25) for i in range(10) for j in range(10)]
@@ -265,6 +288,9 @@ class AIHelpers(object):
 
     def extrude(self, curve_id, height, cap=True, layer=None):
         G = Rhino.Geometry
+        if abs(float(height)) < 1e-9:
+            raise ValueError("extrude height must not be 0. For a handle, spout or rod use "
+                             "ai.tube([(x,y,z), ...], radius).")
         obj = sc.doc.Objects.FindId(self._ids(curve_id)[0])
         srf = G.Surface.CreateExtrusion(obj.Geometry, G.Vector3d(0, 0, float(height)))
         brep = srf.ToBrep()
@@ -327,15 +353,58 @@ class AIHelpers(object):
     def selected(self):
         return [o.Id for o in sc.doc.Objects.GetSelectedObjects(False, False)]
 
-    def layer(self, name, color=None):
-        idx = sc.doc.Layers.FindByFullPath(name, -1)
-        if idx < 0:
-            c = System.Drawing.Color.FromArgb(*[int(v) for v in color]) if color else System.Drawing.Color.Black
-            sc.doc.Layers.Add(name, c)
-        elif color:
-            lay = sc.doc.Layers[idx]
-            lay.Color = System.Drawing.Color.FromArgb(*[int(v) for v in color])
-        return name
+    def layer(self, name, color=None, transparency=None, shine=None):
+        """Create a layer if missing. Use "Parent::Child" for nested layers. -> full layer path
+        With transparency or shine it also gets a render material (same as ai.material)."""
+        if transparency is not None or shine is not None:
+            return self.material(name, color or (200, 200, 200), transparency or 0.0,
+                                 0.3 if shine is None else shine)
+        full = ""
+        for part in [x.strip() for x in str(name).split("::") if x.strip()]:
+            parent = full
+            full = (full + "::" + part) if full else part
+            if sc.doc.Layers.FindByFullPath(full, -1) >= 0:
+                continue
+            lay = Rhino.DocObjects.Layer()
+            lay.Name = part
+            if parent:
+                lay.ParentLayerId = sc.doc.Layers[sc.doc.Layers.FindByFullPath(parent, -1)].Id
+            sc.doc.Layers.Add(lay)
+        if color:
+            lay = sc.doc.Layers[sc.doc.Layers.FindByFullPath(full, -1)]
+            lay.Color = System.Drawing.Color.FromArgb(*[int(v) for v in color[:3]])
+        return full
+
+    def material(self, layer, color, transparency=0.0, shine=0.3, name=None):
+        """Give a layer a render material. color (r,g,b); transparency 0 = solid .. 1 = clear glass."""
+        full = self.layer(layer, color)
+        m = Rhino.DocObjects.Material()
+        m.Name = name or full.split("::")[-1]
+        m.DiffuseColor = System.Drawing.Color.FromArgb(*[int(v) for v in color[:3]])
+        m.Transparency = max(0.0, min(1.0, float(transparency)))
+        m.Shine = max(0.0, min(1.0, float(shine))) * Rhino.DocObjects.Material.MaxShine
+        idx = sc.doc.Materials.Add(m)
+        lay = sc.doc.Layers[sc.doc.Layers.FindByFullPath(full, -1)]
+        lay.RenderMaterialIndex = idx
+        return full
+
+    def revolve(self, profile, cx=0, cy=0, smooth=False, cap=True, layer=None):
+        """Lathe a profile around a vertical axis at (cx, cy). profile = [(radius, z), ...] from bottom to top.
+        Use for bottles, vases, bowls, columns, knobs. smooth=True rounds the profile. -> id"""
+        G = Rhino.Geometry
+        pts = [G.Point3d(float(cx) + float(r), float(cy), float(z)) for r, z in profile]
+        if len(pts) < 2:
+            raise ValueError("profile needs at least 2 (radius, z) points.")
+        if smooth and len(pts) > 2:
+            crv = G.Curve.CreateInterpolatedCurve(pts, 3)
+        else:
+            crv = G.Polyline(pts).ToNurbsCurve()
+        axis = G.Line(G.Point3d(float(cx), float(cy), 0), G.Point3d(float(cx), float(cy), 1))
+        rev = G.RevSurface.Create(crv, axis)
+        brep = G.Brep.CreateFromRevSurface(rev, bool(cap), bool(cap))
+        if cap and not brep.IsSolid:
+            brep = brep.CapPlanarHoles(sc.doc.ModelAbsoluteTolerance) or brep
+        return sc.doc.Objects.AddBrep(brep, self._attr(layer))
 
     def set_layer(self, ids, name):
         self.layer(name)
@@ -510,6 +579,22 @@ class AIHelpers(object):
         if not res:
             raise ValueError("Loft failed.")
         return [sc.doc.Objects.AddBrep(b, self._attr(layer)) for b in res]
+
+    def tube(self, points, radius, smooth=True, layer=None):
+        """Solid round tube through 3D points. Use for handles, spouts, legs, rails, cables. -> id"""
+        G = Rhino.Geometry
+        pts = [self._pt(q) for q in points]
+        if len(pts) < 2:
+            raise ValueError("tube needs at least 2 points.")
+        if smooth and len(pts) > 2:
+            crv = G.Curve.CreateInterpolatedCurve(pts, 3)
+        else:
+            crv = G.Polyline(pts).ToNurbsCurve()
+        res = G.Brep.CreatePipe(crv, float(radius), False, G.PipeCapMode.Flat, True,
+                                sc.doc.ModelAbsoluteTolerance, sc.doc.ModelAngleToleranceRadians)
+        if not res:
+            raise ValueError("Tube failed (radius too large for the bends?).")
+        return sc.doc.Objects.AddBrep(res[0], self._attr(layer))
 
     def pipe(self, curve_id, radius, layer=None):
         G = Rhino.Geometry
@@ -735,13 +820,48 @@ def risky_reasons(code):
     return found
 
 
+def _forgiving(name, fn):
+    """Drop unknown keyword arguments instead of failing, and tell the model about it."""
+    import inspect
+    import functools
+    params = inspect.signature(fn).parameters
+
+    @functools.wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        bad = [k for k in kwargs if k not in params]
+        for k in bad:
+            kwargs.pop(k)
+        if bad:
+            print("NOTE: ai.%s ignored unknown argument(s) %s. Valid: %s"
+                  % (name, ", ".join(bad), ", ".join(q for q in params if q != "self")))
+        return fn(self, *args, **kwargs)
+    return wrapper
+
+
+def _missing_helper(self, name):
+    import difflib
+    names = [n for n in dir(type(self)) if not n.startswith("_")]
+    near = difflib.get_close_matches(name, names, n=4, cutoff=0.4)
+    raise AttributeError("ai.%s does not exist. %s" % (
+        name, ("Did you mean: " + ", ".join("ai." + n for n in near)) if near
+        else "Available: " + ", ".join(names)))
+
+
+for _n, _f in list(vars(AIHelpers).items()):
+    if not _n.startswith("_") and callable(_f):
+        setattr(AIHelpers, _n, _forgiving(_n, _f))
+AIHelpers.__getattr__ = _missing_helper
+AI_HELPERS = AIHelpers()
+
+
 def tool_run_python(code):
     out = io.StringIO()
     undo = sc.doc.BeginUndoRecord("RhinoAI")
     try:
         env = RUN_ENV
+        sys.modules["ai"] = AI_HELPERS  # so a stray "import ai" in model code works
         env.update({"__name__": "__rhino_ai__", "Rhino": Rhino, "sc": sc, "rs": rs, "System": System,
-                    "ai": AIHelpers()})
+                    "ai": AI_HELPERS})
         with contextlib.redirect_stdout(out):
             exec(compile(code, "<rhino_ai>", "exec"), env)
         result = out.getvalue().strip() or "OK (no output)"
@@ -759,6 +879,9 @@ def tool_run_python(code):
     except Exception:
         lines = traceback.format_exc().strip().splitlines()
         tail = [l for l in lines if "<rhino_ai>" in l][-1:] + lines[-1:]
+        if "ModuleNotFoundError" in lines[-1] or "ImportError" in lines[-1]:
+            tail.append("Remove that import. ai, Rhino, sc (scriptcontext), rs and System are ALREADY available; "
+                        "import nothing except standard modules like math.")
         result = (out.getvalue() + "\nERROR:\n" + "\n".join(tail)
                   + "\nHint: prefer the ai.* helpers (ai.box, ai.cylinder, ...) and never resend unchanged code.").strip()
     finally:

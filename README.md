@@ -151,12 +151,12 @@ often guess RhinoCommon signatures wrong. You can use it in your own scripts too
 
 | Group | Helpers |
 |---|---|
-| Solids | `box`, `sphere`, `cylinder`, `extrude`, `boolean_union`, `boolean_difference` |
+| Solids | `box`, `sphere`, `cylinder`, `extrude`, `revolve` (lathe profiles: bottles, vases, columns), `tube` (handles, rails, legs), `boolean_union`, `boolean_difference` |
 | 2D and curves | `point`, `line`, `polyline`, `rectangle` (with corner radius), `polygon`, `circle`, `arc`, `ellipse`, `curve`, `offset`, `fillet`, `join`, `divide`, `curve_union`, `curve_difference`, `curve_intersection`, `length`, `area`, `is_closed` |
 | Surfaces | `planar_surface`, `loft`, `pipe` |
 | Transform | `move`, `copy`, `move_to`, `rotate`, `scale` (about each object's own centre), `mirror` |
 | Arrangement | `array_grid`, `array_polar`, `array_along_curve`, `align`, `distribute`, `place_on_surface`, `distance` |
-| Document | `objects`, `describe`, `center`, `bbox`, `select`, `selected`, `delete`, `layer`, `set_layer`, `set_name` |
+| Document | `objects`, `describe`, `center`, `bbox`, `select`, `selected`, `delete`, `layer` (nested with `Parent::Child`), `material` (colour, transparency, shine), `set_layer`, `set_name` |
 
 The full signatures are in the system prompt at the top of [`rhino/rhino_ai.py`](rhino/rhino_ai.py).
 
